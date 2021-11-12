@@ -1,0 +1,175 @@
+#!/usr/bin/env perl
+use Mojolicious::Lite -signatures;
+
+use Mojo::ByteStream qw(b);
+use Mojo::File qw(path);
+use Mojo::Util qw(b64_decode dumper);
+
+use Checkers;
+
+plugin Config => {default => {db => '/tmp/checkers'}};
+
+my $checkers = Checkers->new(path => app->config->{db});
+
+helper 'checkers.system' => sub ($c, @args) {
+  $checkers->system(hostname => $c->param('hostname'), @args);
+};
+
+app->types->type(csv => 'text/csv');
+
+under sub ($c) {
+  return 1 if $c->app->mode eq 'test';
+  my @keys = @{$c->config->{keys}};
+
+  my $method = '';
+  if (my $key = $c->req->headers->authorization || $c->req->url->password) {
+    $key =~ s/^(Bearer|Basic)\s+//i;
+    $method = lc($1);
+    (undef, $key) = split /:/, b64_decode($key), 2 if $method eq 'basic';
+    return 1 if $key && grep { $_ eq $key } @keys;
+  }
+
+  # Not authenticated
+  $c->res->headers->www_authenticate('Basic') if !$method || $method eq 'basic';
+  $c->render(template => 'denied', status => 401);
+  return undef;
+};
+
+get '/' => sub ($c) {
+  $c->render(text => $checkers->path);
+} => 'index';
+
+get '/graph/#hostname/*labels' => 'graph';
+
+post '/metrics/#hostname' => sub ($c) {
+  return $c->reply->not_found unless ref $c->param('checkers') eq 'Mojo::Upload';
+  $c->checkers->system->add($c->param('checkers')->slurp => $c->req->headers->date);
+  $c->render(text => 'ok');
+} => 'post_metrics';
+
+get '/metrics/#hostname/*labels' => {labels => ''} => sub ($c) {
+  my $system = $c->checkers->system;
+  return $c->reply->not_found unless $system->db->list->size;
+  my $labels = $checkers->parse_labels($c->param('labels'));
+  $c->respond_to(
+    html => {template => 'hostname', records => $system->snapshots->last->records->labels($labels)},
+    csv => {text => $system->snapshots->to_csv($labels)},
+    bin => {text => $system->snapshots->to_metrics($labels)},
+  );
+} => 'get_metrics';
+
+del '/metrics/#hostname' => sub ($c) {
+  return $c->reply->not_found unless $c->checkers->system->snapshots->size;
+  $c->checkers->system->snapshots->last->remove;
+  $c->render(text => 'ok');
+} => 'remove_metrics';
+
+app->start;
+
+__DATA__
+@@ index.html.ep
+
+@@ hostname.html.ep
+% layout 'default';
+% title param 'hostname';
+% $records->map('category')->uniq->each(sub {
+    % my $category = $_;
+    <h2><%= $category %></h2>
+    <ul>
+    % $records->grep(sub{$_->category eq $category})->each(sub{
+      % if ($_->what eq 'info') {
+        <li><span class="info">INFO: </span><%= $_->name %>: <%= $_->message %></li>
+      % }
+      % elsif (not length $_->result) {
+        <li>
+          <span class="fail">Check Failure: </span>
+          <%= link_to $_->name => url_for('graph', {hostname => param('hostname'), labels => sprintf "name/%s", $_->name}) %>
+          <%= $_->message %>
+        </li>
+      % }
+      % elsif ($_->status eq 'OK') {
+        <li>
+          <span class="pass">OK: </span>
+          <%= link_to $_->name => url_for('graph', {hostname => param('hostname'), labels => sprintf "name/%s", $_->name}) %>
+          (<%= $_->result %> <span class="pass">is</span> <%= $_->is %> <%= $_->threshold %>)
+        </li>
+      % }
+      % elsif ($_->status eq 'ALERT' && !$_->supress) {
+        <li>
+          <span class="fail">Fail: </span>
+          <%= link_to $_->name => url_for('graph', {hostname => param('hostname'), labels => sprintf "name/%s", $_->name}) %>
+          (<%= $_->result %> <span class="fail">isn't</span> <%= $_->is %> <%= $_->threshold %>)
+          <%= $_->message %>
+        </li>
+      % }
+      % elsif ($_->status eq 'ALERT' && $_->supress) {
+        <li>
+          <span class="fail">Fail: </span>
+          <%= link_to $_->name => url_for('graph', {hostname => param('hostname'), labels => sprintf "name/%s", $_->name}) %>
+          (<%= $_->result %> <span class="fail">isn't</span> <%= $_->is %> <%= $_->threshold %>)
+          <%= $_->message %>
+        </li>
+      % }
+    % });
+    </ul>
+% })
+
+@@ graph.html.ep
+% layout 'default';
+% title 'Welcome';
+<meta http-equiv="refresh" content="300" />
+<%= javascript '/dygraphs-combined.js' %>
+<center>
+<a href="/"><h1><%= title %></h1></a>
+<p>
+
+<div id="graphdiv" style="width:800px; height:400px;"></div>
+%= javascript begin
+  g = new Dygraph(
+    // containing div
+    document.getElementById("graphdiv"),
+    // CSV or path to a CSV file.
+    "<%= url_for('get_metrics', {hostname => param 'hostname'})->query(_format => 'csv')->to_abs %>",
+    { 
+      title: "<%= param 'hostname' %> | <%= param 'labels' %>",
+      fillGraph: true,
+      fillAlpha: 0.6,
+      highlightCircleSize: 7
+    }
+  );
+% end
+
+<p>&nbsp;<p>
+<font size="-2">Graphing with <a href="http://dygraphs.com/">dygraphs</a></font>
+</center>
+
+@@ denied.html.ep
+Key not found, permission denied.
+
+@@ layouts/default.html.ep
+<!DOCTYPE html>
+<html>
+  <head>
+    %= stylesheet begin
+      .pass { color: green }
+      .info { color: orange }
+      .fail { color: red }
+      .fatal { color: red }
+    % end
+    <title><%= title %></title>
+  </head>
+  <body><%= content %></body>
+</html>
+
+@@ exception.cli.html.ep
+%= $exception->message
+
+@@ not_found.cli.html.ep
+%= 'not_found'
+
+@@ exception.test.html.ep
+%= $exception->message
+%= dumper $snapshot
+
+@@ not_found.test.html.ep
+%= 'not_found'
