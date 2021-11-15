@@ -1,6 +1,6 @@
-group2	Info	Public IP	info				159.89.54.96	
-group2	System	MB RAM Used	value	2504	-le	1000	RAM full	1
-group2	System	GB RAM Free	value	0	-ge	1	RAM Full	
-group2	System	Disk Usage/	value	43	-le	90	Disk Full/dev/vda1	
-group2	System	Disk Usage/boot/efi	value	9	-le	90	Disk Full/dev/vda15	
-group2	Network	Ping Google	value	1	-le	30	Ping taking too long	
+ubuntu-s-2vcpu-4gb-nyc1-01	System	IP	info	Public				159.89.54.96	
+ubuntu-s-2vcpu-4gb-nyc1-01	System	MB RAM Used	value		2597	-le	1000	RAM full	1
+ubuntu-s-2vcpu-4gb-nyc1-01	System	GB RAM Free	value		0	-ge	1	RAM Full	
+ubuntu-s-2vcpu-4gb-nyc1-01	System	Disk Usage	value	/	45	-le	90	Disk Full/dev/vda1	
+ubuntu-s-2vcpu-4gb-nyc1-01	System	Disk Usage	value	/boot/efi	9	-le	90	Disk Full/dev/vda15	
+ubuntu-s-2vcpu-4gb-nyc1-01	Network	Ping Google	value		1	-le	30	Ping taking too long	

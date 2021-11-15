@@ -26,6 +26,9 @@ is $checkers->load->to_csv('/group/group2/category/system/name/Disk')->size, 187
 is $checkers->load->to_csv('/category/system/name/Disk')->size, 375;
 is $checkers->load->to_csv('/category/system')->size, 701;
 is $checkers->load->to_csv->size, 1029;
+
+#diag $checkers->load->tablify;
+
 is $checkers->save($checkers->load->to_string => 'system3')->to_csv->size, 2059;
 $checkers->path->remove_tree('system3');
 done_testing;

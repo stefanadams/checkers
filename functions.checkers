@@ -1,7 +1,9 @@
-[ -z "$CHECKERS_TOKEN" ] && { echo "Missing CHECKERS_TOKEN"; exit 255; }
+[ -n "$CHECKERS" ] && [ -z "$CHECKERS_TOKEN" ] && { echo "Missing CHECKERS_TOKEN"; exit 255; }
 
 CHECKERS_SYSTEM="${CHECKERS_SYSTEM:-$(hostname -f)}"
 CMPDIR="${TMPDIR:-/tmp}/checkers"; mkdir -p "$CMPDIR"
+DEFAULT_GROUP="$CHECKERS_SYSTEM"
+DEFAULT_CATEGORY="$CHECKERS_SYSTEM"
 
 function upload {
   date=$(TZ=GMT date '+%a, %d %b %Y %T %Z')
@@ -11,46 +13,52 @@ function upload {
 }
 
 function info {
-  name="$1"
-  command="$2"
-  awk="${3:-{print}}"
-  /usr/bin/env bash -c "$command" | awk "$awk" | while IFS=$'\t' read message _name; do
-    echo -e "${GROUP:-$CHECKERS_SYSTEM}\t${CATEGORY:-System}\t$name$_name\tinfo\t\t\t\t$message\t"
+  local check="${1%:*}"
+  local of="${1##*:}"
+  [ "$of" == "$check" ] && of=""
+  local command="$2"
+  local awk="${3:-{print}}"
+  local message _of
+
+  /usr/bin/env bash -c "$command" | awk "$awk" | while IFS=$'\t' read message _of; do
+    echo -e "${GROUP:-$DEFAULT_GROUP}\t${CATEGORY:-$DEFAULT_CATEGORY}\t$check\tinfo\t${_of:-$of}\t\t\t\t$message\t"
   done
 }
 
 function check {
-  what="$1"; shift
-  name="$1"
-  command="$2"
-  awk="$3"
-  comparison="$4"
-  threshold="$5"
-  breach_message="$6"
+  local what="$1"; shift
+  local check="${1%:*}"
+  local of="${1##*:}"
+  [ "$of" == "$check" ] && of=""
+  local command="$2"
+  local awk="$3"
+  local comparison="$4"
+  local threshold="$5"
+  local breach_message="$6"
+  local message _of
 
   case "$what" in
     value)
       #echo "/usr/bin/env bash -c '$command' | awk '$awk' | cut -d. -f1 | cut -d, -f1"
       #/usr/bin/env bash -c "$command" | awk "$awk" | cut -d. -f1 | cut -d, -f1
-      /usr/bin/env bash -c "$command" | awk "$awk" | cut -d. -f1 | cut -d, -f1 | while IFS=$'\t' read result _name _message; do
+      /usr/bin/env bash -c "$command" | awk "$awk" | cut -d. -f1 | cut -d, -f1 | while IFS=$'\t' read result _of _message; do
         result=$(looks_like_number "$result")
-        #[ -n "$_name" ] && _name=" - $_name"
-        echo -e "${GROUP:-$CHECKERS_SYSTEM}\t${CATEGORY:-System}\t$name$_name\t$what\t$result\t$comparison\t$threshold\t$breach_message$_message\t$SUPRESS"
+        echo -e "${GROUP:-$DEFAULT_GROUP}\t${CATEGORY:-$DEFAULT_CATEGORY}\t$check\t$what\t${_of:-$of}\t$result\t$comparison\t$threshold\t$breach_message$_message\t$SUPRESS"
       done
       ;;
     count)
       result=$(looks_like_number "$(/usr/bin/env bash -c "$command" | awk "$awk" | wc -l)")
-      echo -e "${GROUP:-$CHECKERS_SYSTEM}\t${CATEGORY:-System}\t$name\t$what\t$result\t$comparison\t$threshold\t$breach_message\t$SUPRESS"
+      echo -e "${GROUP:-$DEFAULT_GROUP}\t${CATEGORY:-$DEFAULT_CATEGORY}\t$check\t$what\t${_of:-$of}\t$result\t$comparison\t$threshold\t$breach_message\t$SUPRESS"
       ;;
     change)
       for file in "$@"; do
         [ -f "$file" -a ! -f "$CMPDIR/$file" ] && cp --parents "$file" "$CMPDIR\t$SUPRESS"
         diff "$CMPDIR/$file" "$file" &>/dev/null
         result=$(looks_like_number "$?")
-        echo -e "${GROUP:-$CHECKERS_SYSTEM}\t${CATEGORY:-System}\t$name\t$what\t$result\t$comparison\t$threshold\tfile changed\t$SUPRESS"
+        echo -e "${GROUP:-$DEFAULT_GROUP}\t${CATEGORY:-$DEFAULT_CATEGORY}\t$check\t$what\t${_of:-$of}\t$result\t$comparison\t$threshold\tfile changed\t$SUPRESS"
       done
       ;;
-    *) echo -e "${GROUP:-$CHECKERS_SYSTEM}\t${CATEGORY:-System}\t$name\t$what\t$result\t$comparison\t$threshold\tinvalid check\t$SUPRESS";;
+    *) echo -e "${GROUP:-$DEFAULT_GROUP}\t${CATEGORY:-$DEFAULT_CATEGORY}\t$check\t$what\t${_of:-$of}\t$result\t$comparison\t$threshold\tinvalid check\t$SUPRESS";;
   esac
 } 2>/dev/null
 

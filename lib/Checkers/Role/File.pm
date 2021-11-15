@@ -11,7 +11,9 @@ our $VERSION = '0.01';
  
 requires 'path';
 
-sub remove ($self, $system, $date) { path($self)->child($system, $date)->remove }
+sub remove ($self, $system, $tail) {
+  path($self)->child($system)->list->sort->tail($tail)->map('remove')->remove;
+}
 
 sub remove_tree ($self, $system) { path($self)->child($system)->remove_tree }
 

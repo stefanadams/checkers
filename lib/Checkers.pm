@@ -1,15 +1,17 @@
 package Checkers;
 use Mojo::Base -base, -signatures;
 
+use Checkers::Record;
 use Mojo::Collection;
 use Mojo::File;
 
-has records => sub { Mojo::Collection->new->with_roles('Checkers::Role::Collection') };
+has records => sub { Mojo::Collection->new->with_roles('Checkers::Role::Collection', '+Transform') };
 
-sub load ($self, $system=undef) {
+sub load ($self, $system=[]) {
   @{$self->records} = ();
+  my %system = (map { $_ => 1 } @$system);
   $self->path->list({dir => 1})->grep(sub {
-    defined $system && $_->basename ne $system ? 0 : 1;
+    $system{$_->basename} || !keys %system;
   })->sort->each(sub {
     $_->list->sort
       ->tap(sub {
@@ -17,7 +19,7 @@ sub load ($self, $system=undef) {
       })
       ->each(sub {
         push @{$self->records}, @{$_->slurp};
-      });
+      })
   });
   $self->records;
 }
