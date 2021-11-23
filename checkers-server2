@@ -1,0 +1,283 @@
+#!/usr/bin/env perl
+use Mojolicious::Lite -signatures;
+
+my $config = plugin Config => {default => {db => 'data'}};
+plugin Checkers => {model => $config->{model}};
+
+under sub ($c) {
+  return 1 if $c->app->mode eq 'test';
+  my @keys = @{$c->config->{keys}};
+
+  my $method = '';
+  if (my $key = $c->req->headers->authorization || $c->req->url->password) {
+    $key =~ s/^(Bearer|Basic)\s+//i;
+    $method = lc($1);
+    (undef, $key) = split /:/, b64_decode($key), 2 if $method eq 'basic';
+    return 1 if $key && grep { $_ eq $key } @keys;
+  }
+
+  # Not authenticated
+  $c->res->headers->www_authenticate('Basic') if !$method || $method eq 'basic';
+  $c->render(template => 'denied', status => 401);
+  return undef;
+};
+
+post '/metrics/#system' => sub ($c) {
+  my $data = $c->param('checkers') eq 'Mojo::Upload' ? $c->param('checkers')->slurp : $c->req->body;
+  return $c->reply->not_found unless $data;
+  $c->timing->start;
+  $c->checkers->model->add($c->checkers->record->new($data));
+  $c->timing->stop;
+  $c->render(text => 'ok');
+} => 'store_checks';
+
+del '/metrics/#system/:limit' => {limit => 0} => sub ($c) {
+  $c->timing->start;
+  $c->checkers->model->remove($c->param('system'), $c->param('limit'));
+  $c->timing->stop;
+  $c->render(text => 'ok');
+} => 'remove_checks';
+
+get '/metrics/:system/:group/:category/:check/*of' => sub ($c) {
+  my $filter;
+  $c->timing->start;
+  $c->respond_to(
+    html => sub ($c) {
+      $c->render(text => $c->checkers->model->checks->find->map('columns')->join("\n"));
+    },
+    json => sub ($c) {
+      $c->render(json => $c->checkers->model->checks->find->map('to_hash')->to_array);
+    },
+    bin => sub ($c) {
+      $c->render(text => $c->checkers->model->checks->find->map('columns', [qw(datetime results)])->join("\n"));
+    },
+    csv => sub ($c) {
+      $c->render(text => $c->checkers->model->checks->find->map('columns')->join("\n"));
+    },
+    any => {text => 'ok'},
+  );
+  $c->timing->stop;
+} => 'fetch_checks';
+
+get '/metrics/query' => [format => [qw(csv html json)]] => {format => 'html'} => sub ($c) {
+  my $filter;
+  $c->timing->start;
+  $c->respond_to(
+    html => sub ($c) {
+      $c->render(text => $c->checkers->model->checks->find->map('columns')->join("\n"));
+    },
+    json => sub ($c) {
+      $c->render(json => $c->checkers->model->checks->find->map('to_hash')->to_array);
+    },
+    csv => sub ($c) {
+      $c->render(text => $c->checkers->model->checks->find->map('columns')->join("\n"));
+    },
+    any => {text => 'ok'},
+  );
+  $c->timing->stop;
+} => 'query_checks';
+
+get '/alerts/:last_fail' => [format => [qw(csv html json)]] => {last_fail => '', format => 'json'} => sub ($c) {
+  $c->timing->start;
+  $c->respond_to(
+    #json => {json => $c->checkers->model->checks->alerts},
+    any => {text => 'ok'},
+  );
+  $c->timing->stop;
+} => 'fetch_alerts';
+
+get '/graph' => 'graph_metrics';
+
+get '/toggle' => sub ($c) {
+  my $file = path('/tmp/checkers.force');
+  -e $file ? $file->remove : $file->touch;
+  $c->render(text => -e $file ? 1 : 0);
+};
+
+get '/' => sub ($c) {
+  $c->timing->start;
+  $c->respond_to(
+    #html => {records => $records->summarize},
+    #json => {json => $records->to_hash},
+    #csv => {text => $records->to_csv},
+    any => {text => 'ok'},
+  );
+  $c->timing->stop;
+} => 'summarize_metrics';
+
+app->start;
+
+__DATA__
+@@ layouts/default.html.ep
+<!DOCTYPE html>
+<html>
+  <head>
+    %= stylesheet begin
+      .pass { color: green }
+      .info { color: orange }
+      .fail { color: red }
+      .fatal { color: red }
+    % end
+    <title><%= title %></title>
+  </head>
+  <body>
+    <%= link_to Refresh => url_with %>
+    % my $fail = $c->checkers->alert;
+    %# <br /><%= dumper $fail->{alert} %>
+    % if ($fail->{alert}->{total}) {
+      <br />New ALERT
+    % }
+    <hr />
+    <%= content %>
+  </body>
+</html>
+
+@@ summarize_metrics.html.ep
+% use Time::Piece;
+% layout 'default';
+% title $c->req->url->query;
+<%= localtime->cdate %><br />
+<%= link_to All => url_with('query_metrics') %><br />
+% my $pass = $records->flatten->reduce(sub { $a + $b->pass }, 0);
+% my $fail = $records->flatten->reduce(sub { $a + $b->fail }, 0);
+% if ($pass || (!$pass && $fail)) {
+<span class="pass">pass</span>: <%= $pass %><br />
+% }
+% if ($fail) {
+<span class="fail">fail</span>: <%= $fail %>
+% }
+% $records->each(sub {
+  % my $pass = $_->reduce(sub { $a + $b->pass }, 0);
+  % my $fail = $_->reduce(sub { $a + $b->fail }, 0);
+  <ul style="list-style-position: outside">
+    <li>
+      <%= link_to url_with('query_metrics')->query(param('category') eq $_->last->category ? {category => undef} : [category => $_->last->category]) => begin %><%= $_->last->category %><% end %><br />
+      % if (time - $_->last->datetime->epoch > 60 * 15) {
+      <span class="fail">last updated <%= int((time - $_->last->datetime->epoch) / 60) %> minutes ago</span><br />
+      % }
+      % if ($pass || (!$pass && $fail)) {
+      <span class="pass">pass</span>: <%= $pass %><br />
+      % }
+      % if ($fail) {
+      <span class="fail">fail</span>: <%= $fail %>
+      % }
+    </li>
+  </ul>
+% });
+
+@@ query_metrics.html.ep
+% use Mojo::Util qw(url_escape);
+% layout 'default';
+% title $c->req->url->query;
+<%= link_to Summary => url_for('summarize_metrics') %>
+% $records->each(sub {
+  % my $category = $_->first->first->category;
+  <h1><%= link_to url_with('query_metrics')->query(param('category') eq $category ? {category => undef} : [category => $category]) => begin %><%= $category %><% end %></h1>
+  % my $pass = $_->flatten->reduce(sub { $a + $b->pass }, 0);
+  % my $fail = $_->flatten->reduce(sub { $a + $b->fail }, 0);
+  % if ($pass || (!$pass && $fail)) {
+  <span class="pass">pass</span>: <%= $pass %><br />
+  % }
+  % if ($fail) {
+  <span class="fail">fail</span>: <%= $fail %>
+  % }
+  % $_->sort(sub { $a->first->pass cmp $b->first->pass || $a->first->not_info cmp $b->first->not_info })->each(sub {
+  <ul style="list-style-position: outside">
+    <li>
+      <%= link_to url_with('query_metrics')->query(param('check') eq $_->first->check ? {check => undef} : [check => $_->first->check]) => begin %><%= $_->first->check %><% end %><br />
+      % my $pass = $_->reduce(sub { $a + $b->pass }, 0);
+      % my $fail = $_->reduce(sub { $a + $b->fail }, 0);
+      % if ($pass || (!$pass && $fail)) {
+      <span class="pass">pass</span>: <%= $pass %><br />
+      % }
+      % if ($fail) {
+      <span class="fail">fail</span>: <%= $fail %>
+      % }
+      <ul style="list-style-position: outside">
+      % $_->sort(sub { $a->not_info <=> $b->not_info || $a->category cmp $b->category })->each(sub {
+        % if ($_->what eq 'info') {
+          <li><span class="info">INFO: </span><%= $_->of %>: <%= $_->message %></li>
+        % }
+        % elsif (not length $_->result) {
+          <li>
+            <span class="fail">Check Failure: </span>
+            <%= link_to url_for('graph_metrics')->query($c->route->query(map { url_escape $_ } $_->system, $_->group, $_->category, $_->check, $_->of))->to_abs => (class => 'fail') => begin %><%= $_->of %><% end %>
+            <%= $_->message %>
+          </li>
+        % }
+        % elsif ($_->status eq 'OK') {
+          <li>
+            <span class="pass">OK: </span>
+            <%= link_to url_for('graph_metrics')->query($c->route->query(map { url_escape $_ } $_->system, $_->group, $_->category, $_->check, $_->of))->to_abs => (class => 'pass') => begin %><%= $_->of %><% end %>
+            (<%= $_->result %> <span class="pass">is</span> <%= $_->is %> <%= $_->threshold %>)
+          </li>
+        % }
+        % elsif ($_->status eq 'ALERT' && !$_->supress) {
+          <li>
+            <span class="fail">Fail: </span>
+            <%= link_to url_for('graph_metrics')->query($c->route->query(map { url_escape $_ } $_->system, $_->group, $_->category, $_->check, $_->of))->to_abs => (class => 'fail') => begin %><%= $_->of %><% end %>
+            (<%= $_->result %> <span class="fail">isn't</span> <%= $_->is %> <%= $_->threshold %>)
+            <span class="fail"><%= $_->message %></span>
+          </li>
+        % }
+        % elsif ($_->status eq 'ALERT' && $_->supress) {
+          <li>
+            <span class="fail">Fail: </span>
+            <%= link_to url_for('graph_metrics')->query($c->route->query(map { url_escape $_ } $_->system, $_->group, $_->category, $_->check, $_->of))->to_abs => (class => 'fail') => begin %><%= $_->of %><% end %>
+            (<%= $_->result %> <span class="fail">isn't</span> <%= $_->is %> <%= $_->threshold %>)
+            <span class="fail"><%= $_->message %></span>
+          </li>
+        % }
+      % });
+      </ul>
+    </li>
+  </ul>
+  % });
+% });
+
+@@ graph_metrics.html.ep
+% use Mojo::Util qw(url_unescape);
+% layout 'default';
+% title $c->req->url->query;
+% my $query_route = $c->query->route;
+<meta http-equiv="refresh" content="300" />
+<%= javascript '/js/dygraphs-combined.js' %>
+<center>
+<a href="/"><h1><%= title %></h1></a>
+<p>
+
+<div id="graphdiv" style="width:800px; height:400px;"></div>
+%= javascript begin
+  g = new Dygraph(
+    // containing div
+    document.getElementById("graphdiv"),
+    // CSV or path to a CSV file.
+    "<%= url_for(fetch_metrics => $query_route)->to_abs %>",
+    { 
+      title: "<%= url_unescape $c->req->url->query %>",
+      fillGraph: true,
+      fillAlpha: 0.6,
+      highlightCircleSize: 7
+    }
+  );
+% end
+
+<p>&nbsp;<p>
+<font size="-2">Graphing with <a href="http://dygraphs.com/">dygraphs</a></font>
+</center>
+
+@@ denied.html.ep
+Key not found, permission denied.
+
+@@ exception.cli.html.ep
+%= $exception->message
+
+@@ not_found.cli.html.ep
+%= 'not_found'
+
+@@ exception.test.html.ep
+%= $exception->message
+%= dumper $snapshot
+
+@@ not_found.test.html.ep
+%= 'not_found'

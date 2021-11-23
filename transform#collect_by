@@ -1,0 +1,36 @@
+use ojo;
+
+my $c = c(
+  {
+    name           => 'Bob',
+    age            => 23,
+    favorite_color => 'blue',
+  },
+  {
+    name           => 'Alice',
+    age            => 24,
+    favorite_color => 'blue',
+  },
+  {
+    name           => 'Eve',
+    age            => 27,
+    favorite_color => 'green',
+  },
+  {
+    name           => 'John',
+    age            => 27,
+    favorite_color => 'green',
+  },
+)->with_roles('+Transform');
+ 
+# Create a Mojo::Collection of Mojo::Collections, where all values in each inner
+# Mojo::Collection share the same key
+my $collections_by_favorite_color = $c->collect_by(sub { $_->{favorite_color} });
+#say r $collections_by_favorite_color;
+
+# collect by multiple keys
+# uses favorite_color and age as the keys
+my $collections_by_favorite_color_and_age = $c->collect_by(sub { $_->{favorite_color}, $_->{age} });
+#say r $collections_by_favorite_color_and_age;
+
+say r $collections_by_favorite_color_and_age->sort(sub{$b->first->{age} <=> $a->first->{age}});

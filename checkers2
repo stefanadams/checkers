@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+# set -x
+
+# set NO_CHECKERS in the environment to output the results to stdout and NOT upload
+# set CHECKERS_DEBUG in the environment to output the results to stdout and ALSO upload
+CHECKERS="http://checkers.adams.fm"
+CHECKERS_TOKEN="qwejkl"
+
+# Server: configure how many breaches in a row constitutes alert status
+# Server: send notification (websocket) when change in alert status
+. ${0%/*}/functions.${0##*/}
+#===============================================================================
+# Checks are named as "SHOULD BE" - so alert if exceeded
+# Usage: check what name command awk_pointer comparison threshold breach_message
+#   what: value, count, change
+#   name: whatever you wanna call the check
+#   command: passed to bash -c (will be fed to awk_pointer)
+#   awk_pointer: passed to awk (fed by command)
+#     Expected output: result [_name [_message]]
+#     For each record returned by awk_pointer
+#       _name is appended to name
+#       _message is appended to breach_message
+#   comparison: -le, -ge
+#   threshold: the value to not exceed
+#   breach_message: the message to display if the threshold is exceeded
+#===============================================================================
+{
+  #CATEGORY="System"
+  info "IP:Public" 'curl -s ifconfig.me'
+  info "Test:This" 'echo -en "m1\tn1\nm2\tn2\n"'
+  SUPRESS=1 check value 'Memory:MB RAM Used' 'free -m' '/Mem:/{ print $3 }' -le 1000 'RAM full'
+  check value 'Memory:GB RAM Free' 'cat /proc/meminfo' '/MemFree:/{ print $2 / 1000000}' -ge 1 'RAM Full'
+  check value 'Disk Usage' 'df -h | grep -e ^/ | grep -v loop' 'BEGIN{ OFS="\t" }{ print $5, $6, $1 }' -le 90 'Disk Full'
+  check value 'Force' 'test -e /tmp/checkers.force && echo 1 || echo 0' '{ print $1 }' -le 0 'Force test'
+  
+  #check change /tmp/test_changes/*
+
+  CATEGORY="Network"
+  check value 'Ping:Google1' 'ping -n -c 3 -w 5 8.8.8.8' 'BEGIN {FS="/"}; /rtt min\/avg\/max\/mdev/{ print $5 }' -le 30 'Ping taking too long'
+  check value 'Ping:Google2' 'ping -n -c 3 -w 5 8.8.8.8' 'BEGIN {FS="/"}; /rtt min\/avg\/max\/mdev/{ print $5 }' -le 30 'Ping taking too long'
+} | upload $CHECKERS

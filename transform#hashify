@@ -1,0 +1,30 @@
+use ojo;
+
+my $c = c(
+  {
+    name           => 'Bob',
+    age            => 23,
+    favorite_color => 'blue',
+  },
+  {
+    name           => 'Alice',
+    age            => 24,
+    favorite_color => 'blue',
+  },
+  {
+    name           => 'Eve',
+    age            => 27,
+    favorite_color => 'green',
+  },
+)->with_roles('+Transform');
+ 
+my $name_to_person = $c->hashify(sub { $_->{name} });
+say r $name_to_person;
+ 
+# set your own value
+my $name_to_favorite_color = $c->hashify(sub { $_->{name} }, sub { $_->{favorite_color} });
+say r $name_to_favorite_color;
+ 
+# return multiple keys as a list to create a multiple nested hashes based on the returned keys and their order
+my $name_to_age_favorite_color = $c->hashify(sub { @$_{qw(name age)} }, sub { $_->{favorite_color} });
+say r $name_to_age_favorite_color;

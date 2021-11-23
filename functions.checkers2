@@ -1,0 +1,67 @@
+[ -n "$CHECKERS" ] && [ -z "$CHECKERS_TOKEN" ] && { echo "Missing CHECKERS_TOKEN"; exit 255; }
+
+CHECKERS_SYSTEM="${CHECKERS_SYSTEM:-$(hostname -f)}"
+CMPDIR="${TMPDIR:-/tmp}/checkers"; mkdir -p "$CMPDIR"
+DEFAULT_GROUP="$CHECKERS_SYSTEM"
+DEFAULT_CATEGORY="$CHECKERS_SYSTEM"
+
+function upload {
+  date=$(TZ=GMT date '+%a, %d %b %Y %T %Z')
+  [ -z "$1" -o -n "$NO_CHECKERS" ] && cat && return
+  [ -n "$CHECKERS_DEBUG" ] && tee=/dev/stderr
+  tee ${tee:-/dev/null} | curl -H "Date: $date" -H "Authorization: Bearer $CHECKERS_TOKEN" -F checkers=@- "$1/metrics/$CHECKERS_SYSTEM"
+}
+
+function info {
+  local check="${1%:*}"
+  local of="${1##*:}"
+  [ "$of" == "$check" ] && of=""
+  local command="$2"
+  local awk="${3:-{print}}"
+  local message _of
+
+  /usr/bin/env bash -c "$command" | awk "$awk" | while IFS=$'\t' read message _of; do
+    echo -e "\t${GROUP:-$DEFAULT_GROUP}\t${CATEGORY:-$DEFAULT_CATEGORY}\t$check\tinfo\t${_of:-$of}\t\t\t\t\t\t$message\t"
+  done
+}
+
+function check {
+  local what="$1"; shift
+  local check="${1%:*}"
+  local of="${1##*:}"
+  [ "$of" == "$check" ] && of=""
+  local command="$2"
+  local awk="$3"
+  local comparison="$4"
+  local threshold="$5"
+  local breach_message="$6"
+  local message _of
+
+  case "$what" in
+    value)
+      #echo "/usr/bin/env bash -c '$command' | awk '$awk' | cut -d. -f1 | cut -d, -f1"
+      #/usr/bin/env bash -c "$command" | awk "$awk" | cut -d. -f1 | cut -d, -f1
+      /usr/bin/env bash -c "$command" | awk "$awk" | cut -d. -f1 | cut -d, -f1 | while IFS=$'\t' read result _of _message; do
+        result=$(looks_like_number "$result")
+        echo -e "\t${GROUP:-$DEFAULT_GROUP}\t${CATEGORY:-$DEFAULT_CATEGORY}\t$check\t$what\t${_of:-$of}\t$result\t$comparison\t$threshold\t\t\t$breach_message$_message\t$SUPRESS"
+      done
+      ;;
+    count)
+      result=$(looks_like_number "$(/usr/bin/env bash -c "$command" | awk "$awk" | wc -l)")
+      echo -e "\t${GROUP:-$DEFAULT_GROUP}\t${CATEGORY:-$DEFAULT_CATEGORY}\t$check\t$what\t${_of:-$of}\t$result\t$comparison\t$threshold\t\t\t$breach_message\t$SUPRESS"
+      ;;
+    change)
+      for file in "$@"; do
+        [ -f "$file" -a ! -f "$CMPDIR/$file" ] && cp --parents "$file" "$CMPDIR\t$SUPRESS"
+        diff "$CMPDIR/$file" "$file" &>/dev/null
+        result=$(looks_like_number "$?")
+        echo -e "\t${GROUP:-$DEFAULT_GROUP}\t${CATEGORY:-$DEFAULT_CATEGORY}\t$check\t$what\t${_of:-$of}\t$result\t$comparison\t$threshold\t\t\tfile changed\t$SUPRESS"
+      done
+      ;;
+    *) echo -e "\t${GROUP:-$DEFAULT_GROUP}\t${CATEGORY:-$DEFAULT_CATEGORY}\t$check\t$what\t${_of:-$of}\t$result\t$comparison\t$threshold\t\t\tinvalid check\t$SUPRESS";;
+  esac
+} 2>/dev/null
+
+function looks_like_number {
+  perl -MScalar::Util=looks_like_number -E '$ARGV[0] =~ s/%$//; looks_like_number($ARGV[0]) and print $ARGV[0]' "$1"
+}

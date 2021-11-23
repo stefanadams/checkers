@@ -1,0 +1,31 @@
+use ojo;
+
+my $c = c(
+  {
+    name           => 'Bob',
+    age            => 23,
+    favorite_color => 'blue',
+  },
+  {
+    name           => 'Alice',
+    age            => 24,
+    favorite_color => 'blue',
+  },
+  {
+    name           => 'Eve',
+    age            => 27,
+    favorite_color => 'green',
+  },
+)->with_roles('+Transform');
+ 
+# collect values with the same key in a Mojo::Collection
+my $favorite_color_to_collection = $c->hashify_collect(sub { $_->{favorite_color} });
+say r $favorite_color_to_collection;
+
+# provide your own get_values sub
+my $favorite_color_to_names = $c->hashify_collect(sub { $_->{favorite_color} }, sub { $_->{name} });
+say r $favorite_color_to_names;
+
+# return multiple values
+my $favorite_color_to_names_and_ages = $c->hashify_collect(sub { $_->{favorite_color} }, sub { $_->{name}, $_->{age} });
+say r $favorite_color_to_names_and_ages;
