@@ -3,10 +3,11 @@ use Mojo::Base 'Mojo::SQLite::Results', -signatures;
 
 use Carp qw(croak);
 use Checkers::Record;
+use Mojo::Collection qw(c);
 
 sub record { Checkers::Record->new($_[0]->sth->fetchrow_hashref) }
 
-sub records { Checkers::Record->new($_[0]->sth->fetchall_arrayref({})) }
+sub records { Checkers::Record->new(c(@{$_[0]->sth->fetchall_arrayref({})})) }
 
 sub version ($self) {
   croak "no can hash" unless $self->can('hash');

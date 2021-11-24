@@ -3,7 +3,7 @@ use Mojo::Base 'Mojo::SQLite::Database', -signatures;
 
 use Carp qw(croak);
 use Checkers::Results;
-use SQL::Bind;
+use SQL::Bind qw();
 
 has results_class => 'Checkers::Results';
 
@@ -12,7 +12,7 @@ sub insert { croak "insert not implemented" }
 sub update { croak "update not implemented" }
 sub delete { croak "delete not implemented" }
 
-sub select_where ($self, $sql, @parameters) { $self->query(SQL::Bind::sql("select * from checkers where $sql", @parameters)) }
+sub sql ($self, $sql, %parameters) { $self->query($self->sqlite->abstract->sql($sql, %parameters)) }
 
 sub version ($self) {
   $self->query('select sqlite_version() as version')->version;
